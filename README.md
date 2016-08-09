@@ -1,2 +1,2 @@
 # WP3 - EpitopeSelector
-Software source of WP3
+Software package for neo-epitope selection
