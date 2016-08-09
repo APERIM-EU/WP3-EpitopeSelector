@@ -15,16 +15,16 @@
 #################################################################
 
 # Set the base image to biodocker base image
-FROM paerim/baseimage
+FROM aperim/baseimage
 
 # update os, install prequisites and clean cache
-RUN yum clean all && yum -y update \
-&& yum install -y \
-    coinor-cbc \
+RUN yum clean all && yum -y install epel-release && yum -y update \
+&& yum -y install \
+    glpk-utils \
     git \
-    python \
     python-pip \
-    python-dev \
+    python-devel \
+    mysql-devel \
 && rm -rf /tmp/* /var/tmp/* ~/.cache/*
 
 ################## BEGIN INSTALLATION ######################
@@ -41,19 +41,19 @@ ENV PATH /WP3-EpitopeSelector/:$PATH
 RUN mkdir /data /config
 
 # Add user aperim with password aperim
-RUN useradd --create-home --shell /bin/bash --user-group --uid 1000 --groups sudo,fuse aperim && \
-    echo `echo "aperim\aperim\n" | passwd aperim` && \
-    chown aperim:aperim /data && \
-    chown aperim:aperim /config
+#RUN useradd --create-home --shell /bin/bash --user-group --uid 1000 --groups sudo,fuse aperim && \
+#    echo `echo "aperim\aperim\n" | passwd aperim` && \
+#    chown aperim:aperim /data && \
+#    chown aperim:aperim /config
 
 # Change user
-USER biodocker
+#USER biodocker
 
 # Share default volumes
 VOLUME ["/data", "/config"]
 
 # Overwrite this with 'CMD []' in a dependent Dockerfile
-CMD ["NeoOptiTope.py -h"]
+CMD ["NeoOptiTope.py"]
 
 # change workdir
 WORKDIR /data
