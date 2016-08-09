@@ -4,8 +4,6 @@ sudo: required
 services:
   - docker
 
-language: python
-
 install:
   - docker build -t aperim/epitopeselector docker/
   
