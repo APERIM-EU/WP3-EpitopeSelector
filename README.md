@@ -1,2 +1,2 @@
-# WP3
+# WP3 - EpitopeSelector
 Software source of WP3
