@@ -10,9 +10,9 @@ install:
   - docker build -t aperim/epitopeselector docker/
   
 script:
-  docker run aperim/epitopeselector -h
+ docker run aperim/epitopeselector -h
   
-after_sucess:
+after_success:
   - if [ "$TRAVIS_BRANCH" == "master" ]; then
     docker login -e="$DOCKER_EMAIL" -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD";
     docker push aperim/epitopeselector;
