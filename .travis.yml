@@ -10,7 +10,7 @@ before_install:
   - docker build -t aperim/epitopeselector docker/
   
 script:
-  docker run aperim/epitopeselector
+  docker run aperim/epitopeselector -h
   
 after_sucess:
   - if [ "$TRAVIS_BRANCH" == "master" ]; then
