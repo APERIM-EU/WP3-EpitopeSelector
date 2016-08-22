@@ -55,6 +55,7 @@ import csv
 import logging
 import math
 import os
+import datetime
 
 import pandas as pd
 import itertools as itr
@@ -133,7 +134,7 @@ def reade_epitope_input(args, alleles):
 
 
             if args.distance is not None:
-                distance[seq] = float(row[args.distance])
+                distance[(seq,allele.name)] = float(row[args.distance])
 
             if args.uncertainty is not None:
                 uncertainty[(seq,allele.name)] = float(row[args.uncertainty])
@@ -217,7 +218,7 @@ def main():
                required=False,
                type=str,
                default=None,
-               help="Column name specifying wether the peptide is a TAA or TSA. (if not specifyied all peptides are assumed to be TSAs)"
+               help="Column name specifying whether the peptide is a TAA or TSA. (if not specifyied all peptides are assumed to be TSAs)"
     )
 
     parser.add_argument("-a","--alleles",
@@ -241,10 +242,16 @@ def main():
                help="Specifies the number of TAA epitopes that are allowed to select",
     )
 
-    parser.add_argument("-t", "--threshold",
+    parser.add_argument("-te", "--threshold_epitope",
                type=float,
                default=0.,
-               help="Specifies the binding threshold for all alleles",
+               help="Specifies the binding/immunogenicity threshold for all alleles",
+    )
+
+    parser.add_argument("-td", "--threshold_distance",
+               type=float,
+               default=0.,
+               help="Specifies the distance-to-self threshold for all alleles",
     )
     parser.add_argument("-o", "--output",
                required=True,
@@ -289,7 +296,7 @@ def main():
     args = parser.parse_args()
     hlas = read_hla_input(args.alleles)
     df_epitope, distance, expression, uncertainty, pep_to_mutation = reade_epitope_input(args, hlas)
-    thresh = {a.name:args.threshold for a in hlas}
+    thresh = {a.name:args.threshold_epitope for a in hlas}
     options = {k.strip():v.strip() for s in args.options.split(",")
                for k,v in s.split("=")} if "=" in args.options else {}
     model = NeoOptiTope(df_epitope,
@@ -297,6 +304,7 @@ def main():
                         k_taa=args.ktaa,
                         threshold=thresh,
                         distance=distance,
+                        dist_threshold=float(args.threshold_distance),
                         expression=expression,
                         uncertainty=uncertainty,
                         overlap=args.cons_overlap,
@@ -317,7 +325,13 @@ def main():
     instance = model.instance
     tis = set(tissues.index.levels[1])
     with open(args.output, "w") as f:
-
+        f.write("#GS\n")
+        f.write("date\timm_column\tinput_peptide_file\tinput_HLA_file\n{date}\t{imm}\t{pep_in}\t{HLA_in}\n\n".format(
+            date=datetime.datetime.now().strftime("%Y-%m-%dT%H:%M"),
+            imm=args.immunogenicity,
+            pep_in=args.input,
+            HLA_in=args.alleles
+        ))
         for i, (obj1,obj2,es) in enumerate(output):
             #Peptide Section
             cov_anti = []
@@ -337,11 +351,12 @@ def main():
                     locus.setdefault(str(a).split("*")[0], set()).add(a)
             cov_als = set(cov_als)
             f.write("#CS-{number}\n".format(number=i))
-            f.write("nof_epitopes\tnof_taa_epitopes\tthreshold\tantigen_const\thla_const\toverlap_const\tdistance2self\tuncertainty\timmunogenicity\trisk\tcovered_hlas\tcovered_antigens\n")
-            f.write("{nof_epitopes}\t{nof_taa_epitopes}\t{threshold}\t{antigen_const}\t{hla_const}\t{overlap_const}\t{distance2self}\t{uncertainty}\t{immunogenicity}\t{risk}\t{covered_hlas}\t{covered_antigens}\n".format(
+            f.write("nof_epitopes\tnof_taa_epitopes\tthreshold_epitope\tthreshold_distance\tantigen_const\thla_const\toverlap_const\tdistance2self\tuncertainty\timmunogenicity\trisk\tcovered_hlas\tcovered_antigens\n")
+            f.write("{nof_epitopes}\t{nof_taa_epitopes}\t{threshold}\t{threshold_distance}\t{antigen_const}\t{hla_const}\t{overlap_const}\t{distance2self}\t{uncertainty}\t{immunogenicity}\t{risk}\t{covered_hlas}\t{covered_antigens}\n".format(
                 nof_epitopes=instance.k.value,
                 nof_taa_epitopes=instance.k_taa.value,
-                threshold=float(args.threshold),
+                threshold=float(args.threshold_epitope),
+                threshold_distance=float(args.threshold_distance),
                 antigen_const=instance.t_var.value,
                 hla_const=instance.t_allele.value,
                 overlap_const=model.overlap,
@@ -356,41 +371,41 @@ def main():
             header = "neoepitope\ttype\tgenes\tmutations\tHLAs"
             if args.distance:
                 header+="\tdistance"
-            header+="\t"+"\t".join(a.name for a in hlas)
+            header+="\t"+"\t".join(a.name+"_imm" for a in hlas)+"\t"+"\t".join(a.name+"_dist" for a in hlas)
             f.write(header+"\n")
             proteins = []
             for e in es:
                 seq = str(e)
                 proteins.extend([p.gene_id for p in e.get_all_proteins()])
-                f.write("{seq}\t{type}\t{genes}\t{mutations}\t{alleles}{distance}\t{predict}\n".format(
+                f.write("{seq}\t{type}\t{genes}\t{mutations}\t{alleles}\t{predict}\t{distance}\n".format(
                     seq=seq,
                     type="TSA" if e.get_metadata("taa", only_first=True) is None else e.get_metadata("taa",
                                                                                                       only_first=True),
                     genes=",".join(p.gene_id for p in e.get_all_proteins()),
                     mutations=",".join(set(pep_to_mutation[seq])),
                     alleles=",".join(str(a) for a in instance.A if seq in instance.A_I[a]),
-                    distance="" if args.distance is None else "\t"+str(distance[seq]),
+                    distance="\t".join(str(distance.get((seq, a.name), 1.0)) for a in hlas),
                     predict="\t".join(str(float(df_epitope.loc[(e,"custom"),a])) for a in hlas)
                 ))
 
             #Protein section
             f.write("\n#PS-{number}\n".format(number=i))
 
-            f.write("gene\ttumor_expression\t"+"\t".join(tis)+"\n")
+            f.write("gene\tlog2(tumor_expression)\t"+"\t".join(tis)+"\n")
             for p in set(proteins):
                 f.write("{gene}\t{tumor}\t{expression}\n".format(
                     gene=p,
-                    tumor=expression[p],
+                    tumor=math.log(expression[p],2),
                     expression="\t".join(tissues.loc[(p,t),"Abundance"].iloc[0] if p in tissues.index.levels[0] else "Na" for t in tis)
                 ))
 
             #Allele section
             f.write("\n#AS-{number}\n".format(number=i))
-            f.write("HLA\ttumor_expression\n")
+            f.write("HLA\tlog2(tumor_expression)\n")
             for a in hlas:
                 f.write("{allele}\t{expr}\n".format(
                     allele=a.name,
-                    expr=a.get_metadata("abundance",only_first=True)
+                    expr=math.log(a.get_metadata("abundance",only_first=True),2)
                 ))
             f.write("\n\n\n")
 

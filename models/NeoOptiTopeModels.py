@@ -34,13 +34,15 @@ from Fred2.Core import EpitopePredictionResult
 
 class NeoOptiTope(object):
 
-  def __init__(self, results, threshold=None, distance={}, expression={}, uncertainty={}, overlap=0, k=10, k_taa=0,
+  def __init__(self, results, threshold=None, dist_threshold=1.0, distance={}, expression={}, uncertainty={}, overlap=0, k=10, k_taa=0,
                solver="glpk", verbosity=0):
         """
         :param result: Epitope prediction result object from which the epitope selection should be performed
         :type result: :class:`~Fred2.Core.Result.EpitopePredictionResult`
         :param dict(str,float) threshold: A dictionary scoring the binding thresholds for each HLA
                                           :class:`~Fred2.Core.Allele.Allele` key = allele name; value = the threshold
+        :param float dist_theshold: Distance threshold: an epitope gets excluded if an epitope has dist-2-self score
+                                    smaller or equal to this threshold for any HLA allele
         :param dict((str,str),float) distance: A dicitionary with key: (peptide sequence, HLA name)
                                                and value the distance2self
         :param dict(str, float) expression: A dictionary with key: gene ID, and value: Gene expression
@@ -56,14 +58,11 @@ class NeoOptiTope(object):
         if not isinstance(results, EpitopePredictionResult):
             raise ValueError("first input parameter is not of type EpitopePredictionResult")
 
-        _alleles = copy.deepcopy(results.columns.values.tolist())
+        _alleles = results.columns.values.tolist()
 
         #Generate abundance dictionary of HLA alleles default is 2.0 as values will be log2 transformed
         probs = {a.name:2.0 if a.get_metadata("abundance", only_first=True) is None else
                  a.get_metadata("abundance", only_first=True) for a in _alleles}
-        if verbosity:
-            for a in _alleles:
-                print a.name, a.prob
 
         #start constructing model
         self.__solver = SolverFactory(solver)
@@ -97,6 +96,8 @@ class NeoOptiTope(object):
         for tup in res_df.itertuples():
             p = tup[0]
             seq = str(p)
+            if any(distance.get((seq, a.name), 1.0) <= dist_threshold for a in _alleles):
+                continue
             peps[seq] = p
             if p.get_metadata("taa",only_first=True):
                 taa.append(seq)
@@ -181,7 +182,6 @@ class NeoOptiTope(object):
         model.t_var = Param(initialize=0, within=NonNegativeIntegers, mutable=True)
         model.t_c = Param(initialize=0.0, within=NonNegativeReals, mutable=True)
         model.abd = Param(model.Q, initialize=lambda model, g: max(0, math.log(expression.get(g, 2)+0.001, 2)))
-        model.d = Param(model.E, model.A, initialize=lambda model, e, a: distance.get((e,a), 1))
         model.eps1 = Param(initialize=1e6, mutable=True)
         model.eps2 = Param(initialize=1e6, mutable=True)
 
@@ -193,7 +193,7 @@ class NeoOptiTope(object):
         # Objective definition
         model.Obj1 = Objective(
             rule=lambda model: -sum(model.x[e] * sum(model.abd[g] for g in model.G[e])
-                             * sum(model.p[a] * model.i[e, a] * model.d[e, a] for a in model.A) for e in model.E),
+                             * sum(model.p[a] * model.i[e, a] for a in model.A) for e in model.E),
             sense=minimize)
         model.Obj2 = Objective(
             rule=lambda model: sum(model.x[e]*sum(model.sigma[e,a] for a in model.A) for e in model.E),
@@ -223,7 +223,7 @@ class NeoOptiTope(object):
 
         #Constraints for Pareto optimization
         model.ImmConst = Constraint(rule=lambda model: sum(model.x[e] * sum(model.abd[g] for g in model.G[e])
-                                                       * sum(model.p[a] * model.i[e, a] * model.d[e, a]
+                                                       * sum(model.p[a] * model.i[e, a]
                                                        for a in model.A) for e in model.E) <= model.eps1)
         model.UncertaintyConst = Constraint(rule=lambda model:sum(model.x[e]*sum(model.sigma[e,a]
                                                                                  for a in model.A)
