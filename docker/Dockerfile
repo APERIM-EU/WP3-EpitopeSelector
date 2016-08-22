@@ -53,7 +53,8 @@ RUN mkdir /data /config
 VOLUME ["/data", "/config"]
 
 # Overwrite this with 'CMD []' in a dependent Dockerfile
-CMD ["NeoOptiTope.py"]
+ENTRYPOINT ["NeoOptiTope.py"]
+CMD ["-h"]
 
 # change workdir
 WORKDIR /data
