@@ -12,7 +12,7 @@ Objective with distance-to-self d_e (assumed to be in the rage [0,1])
 2) max \sum_{e \in E} x_e \cdot (\sum_{g \in G(e)} log(a_g)) \cdot \sum_{h \in H} a_h \cdot i_{e,a} \cdot d_{e,h}
 
 Objective with distance-to-self and uncertainty associated with immunogenicity prediction.
-This model assumes that the each epitope can be assumed as iid Bernouli distributed random variable.
+This model assumes that each epitope can be assumed as iid Bernouli distributed random variable.
 Hence the Overall objective is the Expacation value of a Poissan-Binomial distribution and the uncertainty
 of the objective can be measured by the variance of the Poissan-Binomial distribution. The selection is performed
 by a Pareto optimization and will return all Pareto optimal solutions of Immunogenicity and associated Risk.
@@ -35,15 +35,15 @@ from Fred2.Core import EpitopePredictionResult
 class NeoOptiTope(object):
 
   def __init__(self, results, threshold=None, dist_threshold=1.0, distance={}, expression={}, uncertainty={}, overlap=0, k=10, k_taa=0,
-               solver="glpk", verbosity=0):
+               solver="glpk", verbosity=0, include=[]):
         """
-        :param result: Epitope prediction result object from which the epitope selection should be performed
-        :type result: :class:`~Fred2.Core.Result.EpitopePredictionResult`
+        :param results: Epitope prediction result object from which the epitope selection should be performed
+        :type results: :class:`~Fred2.Core.Result.EpitopePredictionResult`
         :param dict(str,float) threshold: A dictionary scoring the binding thresholds for each HLA
                                           :class:`~Fred2.Core.Allele.Allele` key = allele name; value = the threshold
-        :param float dist_theshold: Distance threshold: an epitope gets excluded if an epitope has dist-2-self score
+        :param float dist_threshold: Distance threshold: an epitope gets excluded if an epitope has dist-2-self score
                                     smaller or equal to this threshold for any HLA allele
-        :param dict((str,str),float) distance: A dicitionary with key: (peptide sequence, HLA name)
+        :param dict((str,str),float) distance: A dictionary with key: (peptide sequence, HLA name)
                                                and value the distance2self
         :param dict(str, float) expression: A dictionary with key: gene ID, and value: Gene expression
                                             in FPKM/RPKM or TPM
@@ -52,19 +52,20 @@ class NeoOptiTope(object):
         :param int k: The number of epitopes to select
         :param int k_taa: The number of TAA epitopes to select
         :param str solver: The solver to be used (default glpk)
-        :param int verbosity: Integer defining whether additional debugg prints are made >0 => debug mode
+        :param int verbosity: Integer defining whether additional debug prints are made >0 => debug mode
         """
-        #check input data
+
+        # check input data
         if not isinstance(results, EpitopePredictionResult):
             raise ValueError("first input parameter is not of type EpitopePredictionResult")
 
         _alleles = results.columns.values.tolist()
 
-        #Generate abundance dictionary of HLA alleles default is 2.0 as values will be log2 transformed
+        # generate abundance dictionary of HLA alleles default is 2.0 as values will be log2 transformed
         probs = {a.name:2.0 if a.get_metadata("abundance", only_first=True) is None else
                  a.get_metadata("abundance", only_first=True) for a in _alleles}
 
-        #start constructing model
+        # start constructing model
         self.__solver = SolverFactory(solver)
         self.__verbosity = verbosity
         self.__changed = True
@@ -73,8 +74,10 @@ class NeoOptiTope(object):
         self.__k_taa = k_taa
         self.__result = None
         self.__thresh = {} if threshold is None else threshold
+        self.__included = include
         self.overlap=overlap
-        # Variable, Set and Parameter preparation
+
+        # variable, set and parameter preparation
         alleles_I = {}
         variations = []
         epi_var = {}
@@ -84,18 +87,27 @@ class NeoOptiTope(object):
         var_epi = {}
         cons = {}
 
-        #unstack multiindex df to get normal df based on first prediction method
-        #and filter for binding epitopes
+        for a in _alleles:
+            alleles_I.setdefault(a.name, set())
+
+        # unstack multiindex df to get normal df based on first prediction method
+        # and filter for binding epitopes
         method = results.index.values[0][1]
         res_df = results.xs(results.index.values[0][1], level="Method")
+
+        # if predcitions are not available for peptides/alleles, replace by 0
+        res_df.fillna(0, inplace=True)
+
         res_df = res_df[res_df.apply(lambda x: any(x[a] > self.__thresh.get(a.name, -float("inf"))
                                                    for a in res_df.columns), axis=1)]
 
-        #transform scores to 1-log50k(IC50) scores if neccassary
-        #and generate mapping dictionaries for Set definitions
+        res_df.fillna(0, inplace=True)
+        # transform scores to 1-log50k(IC50) scores if neccassary
+        # and generate mapping dictionaries for Set definitions
         for tup in res_df.itertuples():
             p = tup[0]
             seq = str(p)
+
             if any(distance.get((seq, a.name), 1.0) <= dist_threshold for a in _alleles):
                 continue
             peps[seq] = p
@@ -125,7 +137,7 @@ class NeoOptiTope(object):
                 var_epi.setdefault(str(seq), set()).add(prot.gene_id)
         self.__peptideSet = peps
 
-        #calculate conservation
+        # calculate conservation
         variations = set(variations)
         total = len(variations)
         for e, v in cons.iteritems():
@@ -140,7 +152,8 @@ class NeoOptiTope(object):
         # MODEL DEFINITIONS
         #
         ######################################
-        #set definition
+
+        # set definition
         model.Q = Set(initialize=variations)
         model.E = Set(initialize=set(peps.keys()))
         model.TAA = Set(initialize=set(taa))
@@ -148,6 +161,13 @@ class NeoOptiTope(object):
         model.G = Set(model.E, initialize=lambda model, e: var_epi[e])
         model.E_var = Set(model.Q, initialize=lambda mode, v: epi_var[v])
         model.A_I = Set(model.A, initialize=lambda model, a: alleles_I[a])
+
+        if self.__included is not None:
+            if len(self.__included) > k:
+                raise ValueError("More epitopes to include than epitopes to select! "
+                                 "Either raise k or reduce epitopes to include.")
+        model.Include = Set(within=model.E, initialize=self.__included)
+
         if overlap > 0:
             def longest_common_substring(model):
                 result = []
@@ -171,9 +191,9 @@ class NeoOptiTope(object):
                 return set(result)
             model.O = Set(dimen=2, initialize=longest_common_substring)
 
-        #parameter definition
+        # parameter definition
         model.k = Param(initialize=self.__k, within=PositiveIntegers, mutable=True)
-        model.k_taa = Param(initialize=self.__k_taa, within=NonPositiveIntegers, mutable=True)
+        model.k_taa = Param(initialize=self.__k_taa, within=NonNegativeIntegers, mutable=True)
         model.p = Param(model.A, initialize=lambda model, a: max(0, math.log(probs[a]+0.001,2)))
         model.c = Param(model.E, initialize=lambda model, e: cons[e],mutable=True)
         model.sigma = Param (model. E, model.A, initialize=lambda model, e, a: uncertainty.get((e,a), 0))
@@ -185,12 +205,12 @@ class NeoOptiTope(object):
         model.eps1 = Param(initialize=1e6, mutable=True)
         model.eps2 = Param(initialize=1e6, mutable=True)
 
-        # Variable Definition
+        # variable Definition
         model.x = Var(model.E, within=Binary)
         model.y = Var(model.A, within=Binary)
         model.z = Var(model.Q, within=Binary)
 
-        # Objective definition
+        # objective definition
         model.Obj1 = Objective(
             rule=lambda model: -sum(model.x[e] * sum(model.abd[g] for g in model.G[e])
                              * sum(model.p[a] * model.i[e, a] for a in model.A) for e in model.E),
@@ -199,13 +219,13 @@ class NeoOptiTope(object):
             rule=lambda model: sum(model.x[e]*sum(model.sigma[e,a] for a in model.A) for e in model.E),
             sense=minimize)
 
-        #Constraints
-        #Obligatory Constraint (number of selected epitopes)
+        # constraints
+        # obligatory Constraint (number of selected epitopes)
         model.NofSelectedEpitopesCov1 = Constraint(rule=lambda model: sum(model.x[e] for e in model.E) >= model.k)
         model.NofSelectedEpitopesCov2 = Constraint(rule=lambda model: sum(model.x[e] for e in model.E) <= model.k)
         model.NofSelectedTAACov = Constraint(rule=lambda model: sum(model.x[e] for e in model.TAA) <= model.k_taa)
 
-        #optional constraints (in basic model they are disabled)
+        # optional constraints (in basic model they are disabled)
         model.IsAlleleCovConst = Constraint(model.A,
                                             rule=lambda model, a: sum(model.x[e] for e in model.A_I[a]) >= model.y[a])
 
@@ -221,7 +241,7 @@ class NeoOptiTope(object):
         if overlap > 0:
             model.OverlappingConstraint = Constraint(model.O, rule=lambda model, e1, e2: model.x[e1]+model.x[e2] <= 1)
 
-        #Constraints for Pareto optimization
+        # constraints for Pareto optimization
         model.ImmConst = Constraint(rule=lambda model: sum(model.x[e] * sum(model.abd[g] for g in model.G[e])
                                                        * sum(model.p[a] * model.i[e, a]
                                                        for a in model.A) for e in model.E) <= model.eps1)
@@ -232,13 +252,16 @@ class NeoOptiTope(object):
         self.__constraints = [model.UncertaintyConst, model.ImmConst]
         self.__epsilons = [model.eps2, model.eps1]
 
-        #generate instance
+        # include constraint
+        model.IncludeEpitopeConstraint = Constraint(model.Include, rule=lambda model, e: model.x[e] >= 1)
+
+        # generate instance
         self.instance = model
         if self.__verbosity > 0:
             print "MODEL INSTANCE"
             self.instance.pprint()
 
-        #constraints
+        # constraints
         self.instance.Obj2.deactivate()
         self.instance.ImmConst.deactivate()
         self.instance.UncertaintyConst.deactivate()
@@ -292,10 +315,10 @@ class NeoOptiTope(object):
         mc = self.instance.t_allele.value
 
         try:
-            #getattr(self.instance, str(self.instance.t_allele)).set_value(max(1,int(len(self.__alleleProb) * minCoverage)))
-            getattr(self.instance, str(self.instance.t_allele))[None] = max(1,int(len(self.__alleleProb) * minCoverage))
-            #variables
-            #constraints
+            # getattr(self.instance, str(self.instance.t_allele)).set_value(max(1,int(len(self.__alleleProb) * minCoverage)))
+            getattr(self.instance, str(self.instance.t_allele))[None] = max(1, int(len(self.__alleleProb) * minCoverage))
+            # variables
+            # constraints
             self.instance.IsAlleleCovConst.activate()
             self.instance.MinAlleleCovConst.activate()
             self.__changed = True
@@ -314,7 +337,7 @@ class NeoOptiTope(object):
         # parameter
         self.__changed = True
 
-        #constraints
+        # constraints
         self.instance.IsAlleleCovConst.deactivate()
         self.instance.MinAlleleCovConst.deactivate()
 
@@ -471,7 +494,6 @@ class NeoOptiTope(object):
                             return self.__result
 
             except Exception as e:
-                print e
                 raise RuntimeError("solve",
                                 "An Error has occurred during solving. Please check your settings and if the solver is registered in PATH environment variable.")
         else:
