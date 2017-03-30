@@ -146,7 +146,6 @@ class NeoOptiTope(object):
             except ZeroDivisionError:
                 cons[e] = 1
         model = ConcreteModel()
-        print(imm)
 
         ######################################
         #
