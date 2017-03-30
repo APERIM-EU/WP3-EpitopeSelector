@@ -6,7 +6,8 @@ usage: NeoOptiTope.py [-h] -i INPUT [-imm IMMUNOGENICITY] [-d DISTANCE]
                       [-ktaa KTAA] [-incl INCLUDE] [-excl EXCLUDE]
                       [-te THRESHOLD_EPITOPE] [-td THRESHOLD_DISTANCE] -o
                       OUTPUT [-s SOLVER] [-c_al CONS_ALLELE]
-                      [-c_a CONS_ANTIGEN] [-c_o CONS_OVERLAP] [-opt OPTIONS]
+                      [-c_a CONS_ANTIGEN] [-c_o CONS_OVERLAP] [-r]
+                      [-opt OPTIONS]
 
 Epitope Selection for personalized vaccine design.
 
@@ -54,6 +55,7 @@ optional arguments:
   -c_o CONS_OVERLAP, --cons_overlap CONS_OVERLAP
                         Activates epitope overlapping constraint with
                         specified threshold
+  -r, --rank            Compute selection on rank input
   -opt OPTIONS, --options OPTIONS
                         String of the form key1=value1,key2=value2 that
                         specify solver specific options (This will not be
@@ -143,7 +145,11 @@ def read_epitope_input(args, alleles, exclude):
                 pep_to_mutation.setdefault(seq, []).append(row["mutation"])
                 expression.setdefault(gene,[]).append(float(row["transcript_expression"]))
 
-                df_pred[allele][pep] = max(0., 1.
+                if args.rank is not None:
+                	df_pred[allele][pep] = max(0., 1.
+                                            - float(row[args.immunogenicity])/100.0)
+                else:
+                	df_pred[allele][pep] = max(0., 1.
                                             - math.log(float(row[args.immunogenicity]),
                                                 50000)) if args.immunogenicity == "HLA_class1_binding_prediction" else float(
                         row[args.immunogenicity])
@@ -343,6 +349,11 @@ def main():
                type=int,
                default=0,
                help="Activates epitope overlapping constraint with specified threshold",
+    )
+
+    parser.add_argument('-r', "--rank", 
+    	       action='store_true',
+               help="Compute selection on rank input"
     )
 
     parser.add_argument("-opt", "--options",
