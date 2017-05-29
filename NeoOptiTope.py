@@ -71,6 +71,7 @@ import math
 import os
 import datetime
 
+
 import pandas as pd
 import itertools as itr
 from Fred2.Core import Allele, Peptide, Protein, EpitopePredictionResult
@@ -145,7 +146,7 @@ def read_epitope_input(args, alleles, exclude):
                 pep_to_mutation.setdefault(seq, []).append(row["mutation"])
                 expression.setdefault(gene,[]).append(float(row["transcript_expression"]))
 
-                if args.rank is not None:
+                if args.rank:
                 	df_pred[allele][pep] = max(0., 1.
                                             - float(row[args.immunogenicity])/100.0)
                 else:
